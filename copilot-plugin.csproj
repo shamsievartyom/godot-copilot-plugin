@@ -1,0 +1,11 @@
+<Project Sdk="Godot.NET.Sdk/4.6.1">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework Condition=" '$(GodotTargetPlatform)' == 'android' ">net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>copilotplugin</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="GitHub.Copilot.SDK" Version="0.1.29" />
+  </ItemGroup>
+</Project>
