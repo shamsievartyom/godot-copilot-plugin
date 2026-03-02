@@ -1,8 +1,6 @@
 #if TOOLS
 using Godot;
 using System;
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using GitHub.Copilot.SDK;
 
 [Tool]
@@ -14,7 +12,6 @@ public partial class CopilotChatPanel : Control
 
     private CopilotClient _client;
     private CopilotSession _session;
-    private Process _cliProcess;
 
     public override void _Ready()
     {
@@ -53,17 +50,9 @@ public partial class CopilotChatPanel : Control
     {
         try
         {
-            var port = await StartCliAndGetPortAsync();
-            if (port == null)
-            {
-                AppendMessage("🔴 Не удалось запустить gh copilot --headless или определить порт.", "#ff4444");
-                return;
-            }
-
             _client = new CopilotClient(new CopilotClientOptions
             {
-                CliUrl = $"localhost:{port}",
-                UseStdio = false
+                UseStdio = true
             });
 
             _session = await _client.CreateSessionAsync(new SessionConfig
@@ -78,49 +67,6 @@ public partial class CopilotChatPanel : Control
         {
             AppendMessage("🔴 Ошибка: " + e.Message, "#ff4444");
         }
-    }
-
-    private async System.Threading.Tasks.Task<string> StartCliAndGetPortAsync()
-    {
-        var tcs = new System.Threading.Tasks.TaskCompletionSource<string>();
-
-        _cliProcess = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "gh",
-                Arguments = "copilot --headless",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-
-        _cliProcess.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data == null) return;
-            var match = Regex.Match(e.Data, @"CLI server listening on port (\d+)");
-            if (match.Success)
-                tcs.TrySetResult(match.Groups[1].Value);
-        };
-
-        try
-        {
-            _cliProcess.Start();
-            _cliProcess.BeginOutputReadLine();
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr("Failed to start gh copilot --headless: " + ex.Message);
-            return null;
-        }
-
-        var timeoutTask = System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(15));
-        var completed = await System.Threading.Tasks.Task.WhenAny(tcs.Task, timeoutTask);
-        if (completed == tcs.Task)
-            return await tcs.Task;
-
-        return null;
     }
 
     private async void OnSendPressed()
@@ -177,13 +123,6 @@ public partial class CopilotChatPanel : Control
         {
             _session?.DisposeAsync().GetAwaiter().GetResult();
             _client?.DisposeAsync().GetAwaiter().GetResult();
-            if (_cliProcess != null && !_cliProcess.HasExited)
-            {
-                _cliProcess.CloseMainWindow();
-                if (!_cliProcess.WaitForExit(3000))
-                    _cliProcess.Kill();
-            }
-            _cliProcess?.Dispose();
         }
         base.Dispose(disposing);
     }

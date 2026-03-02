@@ -15,7 +15,7 @@ Chat with GitHub Copilot directly inside the Godot editor — ask questions abou
 - 💬 Chat with GitHub Copilot directly inside the Godot editor
 - 🎨 Built-in dock panel — no external windows needed
 - ⚡ Powered by `GPT-4.1` model via the official Copilot SDK
-- 🔌 Connects to the local Copilot CLI server
+- 🔌 Uses stdio transport — no ports or manual CLI management needed
 
 ---
 
@@ -61,7 +61,7 @@ In Godot, go to:
 
 ### Step 1 — Open Godot
 
-Open the project in Godot. The plugin will automatically start `gh copilot --headless` in the background and detect the port. The **Copilot Chat** dock panel will appear on the right side of the editor (next to Inspector / Signals tabs). Wait for the "🟢 Copilot подключён!" message to appear before chatting.
+Open the project in Godot. The plugin will automatically connect to Copilot via stdio transport — no manual CLI startup required. The **Copilot Chat** dock panel will appear on the right side of the editor (next to Inspector / Signals tabs). Wait for the "🟢 Copilot подключён!" message to appear before chatting.
 
 > **Note:** Make sure [GitHub CLI](https://cli.github.com/) is installed and authenticated (`gh auth login`) before opening Godot.
 
@@ -96,8 +96,7 @@ godot-copilot-plugin/
 
 ## 🗺️ Roadmap
 
-- [x] Auto-detect CLI server port
-- [x] Auto-start CLI server from the plugin
+- [x] Auto-start CLI via stdio transport
 - [ ] Persistent chat history
 - [ ] Streaming responses (token by token)
 - [ ] Code context awareness (send selected code to Copilot)
