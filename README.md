@@ -22,9 +22,9 @@ Chat with GitHub Copilot directly inside the Godot editor — ask questions abou
 ## 📋 Requirements
 
 - [Godot 4.x](https://godotengine.org/) with **Mono / .NET** support
-- [GitHub CLI](https://cli.github.com/) installed and authenticated
+- [.NET SDK 8+](https://dotnet.microsoft.com/download)
+- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated (`gh auth login`) — `gh copilot` is built into recent versions of `gh`
 - GitHub Copilot subscription
-- .NET SDK
 
 ---
 
