@@ -52,6 +52,8 @@ public partial class CopilotChatPanel : Control
         {
             _client = new CopilotClient(new CopilotClientOptions
             {
+                CliPath = "gh",
+                CliArgs = new[] { "copilot" },
                 UseStdio = true
             });
 
