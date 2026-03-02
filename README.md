@@ -59,26 +59,13 @@ In Godot, go to:
 
 ## ▶️ Usage
 
-### Step 1 — Start the Copilot CLI server
+### Step 1 — Open Godot
 
-Before opening Godot, run this in a terminal and **keep it running**:
+Open the project in Godot. The plugin will automatically start `gh copilot --headless` in the background and detect the port. The **Copilot Chat** dock panel will appear on the right side of the editor (next to Inspector / Signals tabs). Wait for the "🟢 Copilot подключён!" message to appear before chatting.
 
-```bash
-gh copilot --headless
-```
+> **Note:** Make sure [GitHub CLI](https://cli.github.com/) is installed and authenticated (`gh auth login`) before opening Godot.
 
-You will see:
-```
-CLI server listening on port XXXXX
-```
-
-> **Note:** The port changes every time. Currently the port is hardcoded in `CopilotChatPanel.cs` — see [Known Issues](#-known-issues).
-
-### Step 2 — Open Godot
-
-Open the project in Godot. The **Copilot Chat** dock panel will appear on the right side of the editor (next to Inspector / Signals tabs).
-
-### Step 3 — Chat!
+### Step 2 — Chat!
 
 - Type your message in the input field at the bottom
 - Press **Enter** or click **➤** to send
@@ -95,7 +82,6 @@ godot-copilot-plugin/
 │       ├── plugin.cfg            # Plugin metadata
 │       ├── CopilotChatPlugin.cs  # EditorPlugin — registers the dock
 │       └── CopilotChatPanel.cs   # Chat UI + Copilot SDK integration
-├── TestNode.cs                   # Test script (SDK connection test)
 ├── project.godot                 # Godot project file
 └── copilot-plugin.csproj         # .NET project file
 ```
@@ -104,18 +90,14 @@ godot-copilot-plugin/
 
 ## ⚠️ Known Issues
 
-- **Hardcoded port** — The CLI server port (`59707`) is hardcoded in `CopilotChatPanel.cs`. If `gh copilot --headless` starts on a different port, update it manually:
-  ```csharp
-  CliUrl = "localhost:YOUR_PORT"
-  ```
-- **CLI must be running** — The plugin will show a connection error if `gh copilot --headless` is not running before opening Godot.
+- **CLI must be available** — The plugin requires `gh` (GitHub CLI) to be installed and authenticated. If the CLI is missing or not authenticated, the chat panel will show a connection error.
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Auto-detect CLI server port
-- [ ] Auto-start CLI server from the plugin
+- [x] Auto-detect CLI server port
+- [x] Auto-start CLI server from the plugin
 - [ ] Persistent chat history
 - [ ] Streaming responses (token by token)
 - [ ] Code context awareness (send selected code to Copilot)
