@@ -1,6 +1,7 @@
 #if TOOLS
 using Godot;
 using System;
+using System.Threading;
 using GitHub.Copilot.SDK;
 
 [Tool]
@@ -12,9 +13,12 @@ public partial class CopilotChatPanel : Control
 
     private CopilotClient _client;
     private CopilotSession _session;
+    private CancellationTokenSource _cts;
 
     public override void _Ready()
     {
+        _cts = new CancellationTokenSource();
+
         // Строим UI программно
         CustomMinimumSize = new Vector2(250, 400);
 
@@ -43,17 +47,15 @@ public partial class CopilotChatPanel : Control
         _sendButton.Pressed += OnSendPressed;
         _input.TextSubmitted += _ => OnSendPressed();
 
-        _ = InitCopilot();
+        _ = InitCopilot(_cts.Token);
     }
 
-    private async System.Threading.Tasks.Task InitCopilot()
+    private async System.Threading.Tasks.Task InitCopilot(CancellationToken token)
     {
         try
         {
             _client = new CopilotClient(new CopilotClientOptions
             {
-                CliPath = "gh",
-                CliArgs = new[] { "copilot" },
                 UseStdio = true
             });
 
@@ -61,9 +63,13 @@ public partial class CopilotChatPanel : Control
             {
                 Model = "gpt-4.1",
                 OnPermissionRequest = PermissionHandler.ApproveAll
-            });
+            }, token);
 
             AppendMessage("🟢 Copilot подключён!", "#00ff88");
+        }
+        catch (OperationCanceledException)
+        {
+            // Editor is closing, normal shutdown
         }
         catch (Exception e)
         {
@@ -92,9 +98,8 @@ public partial class CopilotChatPanel : Control
         try
         {
             var response = await _session.SendAndWaitAsync(
-                new MessageOptions { Prompt = text }
+                new MessageOptions { Prompt = text }, null, _cts.Token
             );
-            // Remove the "typing" indicator line and show the real response
             var bbcode = _history.Text;
             var typingTag = "[color=#aaaaaa]Copilot печатает...[/color]\n\n";
             var idx = bbcode.LastIndexOf(typingTag, StringComparison.Ordinal);
@@ -102,15 +107,22 @@ public partial class CopilotChatPanel : Control
                 _history.Text = bbcode.Remove(idx, typingTag.Length);
             AppendMessage("Copilot: " + response?.Data.Content, "#ffffff");
         }
+        catch (OperationCanceledException)
+        {
+            // Editor is closing, normal shutdown
+        }
         catch (Exception e)
         {
             AppendMessage("Ошибка: " + e.Message, "#ff4444");
         }
         finally
         {
-            _input.Editable = true;
-            _sendButton.Disabled = false;
-            _input.GrabFocus();
+            if (IsInsideTree())
+            {
+                _input.Editable = true;
+                _sendButton.Disabled = false;
+                _input.GrabFocus();
+            }
         }
     }
 
@@ -119,13 +131,25 @@ public partial class CopilotChatPanel : Control
         _history.AppendText($"[color={color}]{text}[/color]\n\n");
     }
 
+    public override void _ExitTree()
+    {
+        // 1. Cancel all in-flight async operations so continuations don't run on a dead node
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+
+        // 2. Force-stop the SDK subprocess (non-blocking)
+        var client = _client;
+        _client = null;
+        _session = null;
+        if (client != null)
+            _ = System.Threading.Tasks.Task.Run(() => client.ForceStopAsync());
+
+        base._ExitTree();
+    }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
-        {
-            _session?.DisposeAsync().GetAwaiter().GetResult();
-            _client?.DisposeAsync().GetAwaiter().GetResult();
-        }
         base.Dispose(disposing);
     }
 }
