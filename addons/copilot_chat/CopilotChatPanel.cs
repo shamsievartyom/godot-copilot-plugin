@@ -31,7 +31,8 @@ public partial class CopilotChatPanel : Control
     private string _projectKey;
     private bool _suppressChatSwitch;
     private bool _chatHasMessages;
-    private const string ConfigFile = "res://addons/copilot_chat/data/config.json";
+    private const string ConfigFile  = "res://addons/copilot_chat/data/config.json";
+    private const string CopilotModel = "gpt-5-mini";
 
     // ────────────────────────────────────────────────────────────────────────
     //  Config data model
@@ -218,7 +219,7 @@ public partial class CopilotChatPanel : Control
         return new ChatEntry
         {
             Id      = $"godot-{safe}-{ts}",
-            Name    = $"Чат {pc.Chats.Count + 1}",
+            Name    = "Новый чат",
             Created = ts
         };
     }
@@ -385,7 +386,7 @@ public partial class CopilotChatPanel : Control
                 {
                     session = await _client.ResumeSessionAsync(sessionId, new ResumeSessionConfig
                     {
-                        Model               = "gpt-5-mini",
+                        Model               = CopilotModel,
                         OnPermissionRequest = PermissionHandler.ApproveAll
                     }, token);
                 }
@@ -403,7 +404,7 @@ public partial class CopilotChatPanel : Control
                 session = await _client.CreateSessionAsync(new SessionConfig
                 {
                     SessionId           = sessionId,
-                    Model               = "gpt-5-mini",
+                    Model               = CopilotModel,
                     OnPermissionRequest = PermissionHandler.ApproveAll
                 }, token);
             }
@@ -466,9 +467,17 @@ public partial class CopilotChatPanel : Control
 
         _input.Clear();
         SetInputEnabled(false);
+        bool isFirstMessage = !_chatHasMessages;
 
         AppendMessage(text, "#88ccff");
         AppendMessage("Copilot печатает...", "#aaaaaa");
+
+        if (isFirstMessage)
+        {
+            var preview = text.Length > 50 ? text[..50].TrimEnd() + "…" : text;
+            RenameCurrentChat(preview);
+            _ = GenerateAndApplyTitle(text, _cts.Token);
+        }
 
         try
         {
@@ -498,6 +507,54 @@ public partial class CopilotChatPanel : Control
     // ────────────────────────────────────────────────────────────────────────
     //  Helpers
     // ────────────────────────────────────────────────────────────────────────
+
+    private async System.Threading.Tasks.Task GenerateAndApplyTitle(string firstMessage, CancellationToken token)
+    {
+        try
+        {
+            var titleSession = await _client.CreateSessionAsync(new SessionConfig
+            {
+                Model               = CopilotModel,
+                OnPermissionRequest = PermissionHandler.ApproveAll
+            }, token);
+
+            var response = await titleSession.SendAndWaitAsync(new MessageOptions
+            {
+                Prompt =
+                    "You are an expert in crafting pithy titles for chatbot conversations.\n\n" +
+                    "Please write a brief title for the following request:\n\n" +
+                    firstMessage + "\n\n" +
+                    "The title should not be wrapped in quotes. It should be about 8 words or fewer."
+            }, null, token);
+
+            var title = response?.Data.Content?.Trim();
+            if (string.IsNullOrEmpty(title)) return;
+
+            // Strip surrounding quotes if the model added them anyway
+            if (System.Text.RegularExpressions.Regex.IsMatch(title, "^\".*\"$"))
+                title = title[1..^1].Trim();
+
+            // Ignore refusals
+            if (title.Contains("can't assist with that", StringComparison.OrdinalIgnoreCase)) return;
+
+            RenameCurrentChat(title);
+        }
+        catch { /* best-effort, title stays as "Новый чат" */ }
+    }
+
+    private void RenameCurrentChat(string title)
+    {
+        var pc  = GetOrCreateProjectChats();
+        var idx = _chatSelector.Selected;
+        if (idx < 0 || idx >= pc.Chats.Count) return;
+
+        pc.Chats[idx].Name = title;
+        SaveConfig();
+
+        _suppressChatSwitch = true;
+        _chatSelector.SetItemText(idx, title);
+        _suppressChatSwitch = false;
+    }
 
     private void AppendMessage(string text, string color = "#ffffff")
     {
