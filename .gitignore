@@ -12,3 +12,6 @@ obj/
 # OS
 .DS_Store
 Thumbs.db
+
+# Copilot chat data
+addons/copilot_chat/data/
