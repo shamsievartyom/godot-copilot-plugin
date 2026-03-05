@@ -14,6 +14,7 @@ public partial class CopilotChatPanel : Control
     private CopilotClient _client;
     private CopilotSession _session;
     private CancellationTokenSource _cts;
+    private string _bbcode = "";
 
     public override void _Ready()
     {
@@ -61,7 +62,7 @@ public partial class CopilotChatPanel : Control
 
             _session = await _client.CreateSessionAsync(new SessionConfig
             {
-                Model = "gpt-4.1",
+                Model = "gpt-5-mini",
                 OnPermissionRequest = PermissionHandler.ApproveAll
             }, token);
 
@@ -92,7 +93,7 @@ public partial class CopilotChatPanel : Control
         _input.Editable = false;
         _sendButton.Disabled = true;
 
-        AppendMessage("Вы: " + text, "#88ccff");
+        AppendMessage(text, "#88ccff");
         AppendMessage("Copilot печатает...", "#aaaaaa");
 
         try
@@ -100,12 +101,10 @@ public partial class CopilotChatPanel : Control
             var response = await _session.SendAndWaitAsync(
                 new MessageOptions { Prompt = text }, null, _cts.Token
             );
-            var bbcode = _history.Text;
             var typingTag = "[color=#aaaaaa]Copilot печатает...[/color]\n\n";
-            var idx = bbcode.LastIndexOf(typingTag, StringComparison.Ordinal);
-            if (idx >= 0)
-                _history.Text = bbcode.Remove(idx, typingTag.Length);
-            AppendMessage("Copilot: " + response?.Data.Content, "#ffffff");
+            _bbcode = _bbcode.Replace(typingTag, "");
+            _history.Text = _bbcode;
+            AppendMessage(response?.Data.Content, "#ffffff");
         }
         catch (OperationCanceledException)
         {
@@ -128,7 +127,8 @@ public partial class CopilotChatPanel : Control
 
     private void AppendMessage(string text, string color = "#ffffff")
     {
-        _history.AppendText($"[color={color}]{text}[/color]\n\n");
+        _bbcode += $"[color={color}]{text}[/color]\n\n";
+        _history.Text = _bbcode;
     }
 
     public override void _ExitTree()
