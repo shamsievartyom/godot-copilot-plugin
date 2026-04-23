@@ -17,8 +17,13 @@ public partial class CopilotChatPanel : Control
     private LineEdit _input;
     private Button _sendButton;
     private OptionButton _chatSelector;
+    private OptionButton _modelSelector;
     private Button _newChatButton;
     private Button _deleteChatButton;
+
+    // ── Model list ──────────────────────────────────────────────────────────
+    private List<string> _modelIds = new();
+    private bool _suppressModelSwitch;
 
     // ── Copilot ─────────────────────────────────────────────────────────────
     private CopilotClient _client;
@@ -47,8 +52,9 @@ public partial class CopilotChatPanel : Control
 
     private class ProjectChats
     {
-        [JsonPropertyName("lastId")] public string LastChatId { get; set; }
-        [JsonPropertyName("chats")]  public List<ChatEntry> Chats { get; set; } = new();
+        [JsonPropertyName("lastId")]    public string LastChatId { get; set; }
+        [JsonPropertyName("lastModel")] public string LastModel  { get; set; }
+        [JsonPropertyName("chats")]     public List<ChatEntry> Chats { get; set; } = new();
     }
 
     private class ChatConfig
@@ -119,6 +125,21 @@ public partial class CopilotChatPanel : Control
 
         _deleteChatButton = new Button { Text = "✕", TooltipText = "Удалить чат" };
         topBar.AddChild(_deleteChatButton);
+
+        // ── Model bar ──
+        var modelBar = new HBoxContainer();
+        vbox.AddChild(modelBar);
+
+        var modelLabel = new Label { Text = "Model: " };
+        modelBar.AddChild(modelLabel);
+
+        _modelSelector = new OptionButton();
+        _modelSelector.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _modelSelector.Disabled = true; // enabled after models are loaded
+        _modelSelector.AddItem("Loading...");
+        modelBar.AddChild(_modelSelector);
+
+        _modelSelector.ItemSelected += OnModelSelected;
 
         // ── History ──
         _history = new RichTextLabel();
@@ -359,6 +380,8 @@ public partial class CopilotChatPanel : Control
         {
             _client = new CopilotClient(new CopilotClientOptions { UseStdio = true });
 
+            await PopulateModelSelector(token);
+
             var chat = CurrentChat();
             await LoadOrCreateSession(chat?.Id, token);
         }
@@ -386,7 +409,7 @@ public partial class CopilotChatPanel : Control
                 {
                     session = await _client.ResumeSessionAsync(sessionId, new ResumeSessionConfig
                     {
-                        Model               = CopilotModel,
+                        Model               = GetCurrentModel(),
                         OnPermissionRequest = PermissionHandler.ApproveAll
                     }, token);
                 }
@@ -404,7 +427,7 @@ public partial class CopilotChatPanel : Control
                 session = await _client.CreateSessionAsync(new SessionConfig
                 {
                     SessionId           = sessionId,
-                    Model               = CopilotModel,
+                    Model               = GetCurrentModel(),
                     OnPermissionRequest = PermissionHandler.ApproveAll
                 }, token);
             }
@@ -512,7 +535,7 @@ public partial class CopilotChatPanel : Control
     {
         try
         {
-            var titleSession = await _client.CreateSessionAsync(new SessionConfig
+            await using var titleSession = await _client.CreateSessionAsync(new SessionConfig
             {
                 Model               = CopilotModel,
                 OnPermissionRequest = PermissionHandler.ApproveAll
@@ -564,8 +587,85 @@ public partial class CopilotChatPanel : Control
 
     private void SetInputEnabled(bool enabled)
     {
-        _input.Editable       = enabled;
-        _sendButton.Disabled  = !enabled;
+        _input.Editable      = enabled;
+        _sendButton.Disabled = !enabled;
+        if (_modelSelector != null && _modelIds.Count > 0)
+            _modelSelector.Disabled = !enabled;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    //  Model selector
+    // ────────────────────────────────────────────────────────────────────────
+
+    private string GetCurrentModel()
+    {
+        var pc = GetOrCreateProjectChats();
+        return pc.LastModel ?? CopilotModel;
+    }
+
+    private async System.Threading.Tasks.Task PopulateModelSelector(CancellationToken token)
+    {
+        try
+        {
+            var models = await _client.ListModelsAsync(token);
+            if (models == null || models.Count == 0) return;
+
+            var pc = GetOrCreateProjectChats();
+            var savedModel = pc.LastModel ?? CopilotModel;
+
+            _suppressModelSwitch = true;
+            _modelSelector.Clear();
+            _modelIds.Clear();
+
+            int selectedIdx = 0;
+            for (int i = 0; i < models.Count; i++)
+            {
+                var m = models[i];
+                _modelIds.Add(m.Id);
+                _modelSelector.AddItem(m.Name ?? m.Id);
+                if (m.Id == savedModel)
+                    selectedIdx = i;
+            }
+
+            _modelSelector.Select(selectedIdx);
+            _modelSelector.Disabled = false;
+            _suppressModelSwitch = false;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e)
+        {
+            GD.PrintErr("Copilot: failed to load models: " + e.Message);
+            _suppressModelSwitch = false;
+        }
+    }
+
+    private void OnModelSelected(long index)
+    {
+        if (_suppressModelSwitch) return;
+        _ = SwitchModel((int)index, _cts.Token);
+    }
+
+    private async System.Threading.Tasks.Task SwitchModel(int index, CancellationToken token)
+    {
+        if (index < 0 || index >= _modelIds.Count) return;
+        var modelId = _modelIds[index];
+
+        var pc = GetOrCreateProjectChats();
+        pc.LastModel = modelId;
+        SaveConfig();
+
+        if (_session != null)
+        {
+            try
+            {
+                await _session.SetModelAsync(modelId, token);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception e)
+            {
+                AppendMessage($"⚠️ Не удалось сменить модель: {e.Message}", "#ffaa00");
+            }
+        }
     }
 }
 #endif
