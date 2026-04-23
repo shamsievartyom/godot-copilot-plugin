@@ -145,6 +145,7 @@ public partial class CopilotChatPanel : Control
         _history = new RichTextLabel();
         _history.BbcodeEnabled      = true;
         _history.ScrollFollowing    = true;
+        _history.SelectionEnabled   = true;
         _history.SizeFlagsVertical  = SizeFlags.ExpandFill;
         vbox.AddChild(_history);
 
