@@ -6,6 +6,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Linq;
 using System.Threading;
 using GitHub.Copilot.SDK;
 
@@ -608,8 +609,8 @@ public partial class CopilotChatPanel : Control
     {
         try
         {
-            var models = await _client.ListModelsAsync(token);
-            if (models == null || models.Count == 0) return;
+            var allModels = await _client.ListModelsAsync(token);
+            if (allModels == null || allModels.Count == 0) return;
 
             var pc = GetOrCreateProjectChats();
             var savedModel = pc.LastModel ?? CopilotModel;
@@ -619,9 +620,9 @@ public partial class CopilotChatPanel : Control
             _modelIds.Clear();
 
             int selectedIdx = 0;
-            for (int i = 0; i < models.Count; i++)
+            for (int i = 0; i < allModels.Count; i++)
             {
-                var m = models[i];
+                var m = allModels[i];
                 _modelIds.Add(m.Id);
                 _modelSelector.AddItem(m.Name ?? m.Id);
                 if (m.Id == savedModel)
@@ -652,6 +653,7 @@ public partial class CopilotChatPanel : Control
         var modelId = _modelIds[index];
 
         var pc = GetOrCreateProjectChats();
+        var previousModel = pc.LastModel ?? CopilotModel;
         pc.LastModel = modelId;
         SaveConfig();
 
@@ -664,9 +666,35 @@ public partial class CopilotChatPanel : Control
             catch (OperationCanceledException) { }
             catch (Exception e)
             {
-                AppendMessage($"⚠️ Не удалось сменить модель: {e.Message}", "#ffaa00");
+                // If the model is unsupported (e.g. plan restriction), remove it from the list
+                if (e.Message.Contains("400") || e.Message.Contains("not supported"))
+                {
+                    AppendMessage($"⚠️ Модель недоступна для вашего тарифного плана: {_modelSelector.GetItemText(index)}", "#ffaa00");
+                    RemoveUnsupportedModel(index, previousModel);
+                }
+                else
+                {
+                    AppendMessage($"⚠️ Не удалось сменить модель: {e.Message}", "#ffaa00");
+                }
+
+                // Revert saved model
+                pc.LastModel = previousModel;
+                SaveConfig();
             }
         }
+    }
+
+    private void RemoveUnsupportedModel(int index, string fallbackModelId)
+    {
+        _suppressModelSwitch = true;
+        _modelIds.RemoveAt(index);
+        _modelSelector.RemoveItem(index);
+
+        // Select the fallback model
+        var fallbackIdx = _modelIds.IndexOf(fallbackModelId);
+        if (fallbackIdx < 0) fallbackIdx = 0;
+        _modelSelector.Select(fallbackIdx);
+        _suppressModelSwitch = false;
     }
 }
 #endif
