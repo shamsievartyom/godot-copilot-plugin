@@ -24,7 +24,10 @@ public partial class CopilotChatPanel : Control
 
     // ── Model list ──────────────────────────────────────────────────────────
     private List<string> _modelIds = new();
+    private List<ModelInfo> _models = new();
     private bool _suppressModelSwitch;
+    private OptionButton _reasoningSelector;
+    private bool _suppressReasoningSwitch;
 
     // ── Copilot ─────────────────────────────────────────────────────────────
     private CopilotClient _client;
@@ -53,9 +56,10 @@ public partial class CopilotChatPanel : Control
 
     private class ProjectChats
     {
-        [JsonPropertyName("lastId")]    public string LastChatId { get; set; }
-        [JsonPropertyName("lastModel")] public string LastModel  { get; set; }
-        [JsonPropertyName("chats")]     public List<ChatEntry> Chats { get; set; } = new();
+        [JsonPropertyName("lastId")]        public string  LastChatId         { get; set; }
+        [JsonPropertyName("lastModel")]     public string  LastModel          { get; set; }
+        [JsonPropertyName("lastReasoning")] public string? LastReasoningEffort { get; set; }
+        [JsonPropertyName("chats")]         public List<ChatEntry> Chats      { get; set; } = new();
     }
 
     private class ChatConfig
@@ -127,20 +131,33 @@ public partial class CopilotChatPanel : Control
         _deleteChatButton = new Button { Text = "✕", TooltipText = "Удалить чат" };
         topBar.AddChild(_deleteChatButton);
 
-        // ── Model bar ──
+        // ── Model bar (model selector+multiplier overlay | reasoning selector) ──
         var modelBar = new HBoxContainer();
         vbox.AddChild(modelBar);
 
         var modelLabel = new Label { Text = "Model: " };
         modelBar.AddChild(modelLabel);
 
+        // Wrapper so the multiplier label can be overlaid inside the selector
+        var modelWrapper = new Control();
+        modelWrapper.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        modelBar.AddChild(modelWrapper);
+
         _modelSelector = new OptionButton();
-        _modelSelector.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _modelSelector.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         _modelSelector.Disabled = true; // enabled after models are loaded
         _modelSelector.AddItem("Loading...");
-        modelBar.AddChild(_modelSelector);
+        modelWrapper.AddChild(_modelSelector);
 
         _modelSelector.ItemSelected += OnModelSelected;
+
+        _reasoningSelector = new OptionButton();
+        _reasoningSelector.CustomMinimumSize = new Vector2(90, 0);
+        _reasoningSelector.Disabled = true;
+        _reasoningSelector.AddItem("—");
+        modelBar.AddChild(_reasoningSelector);
+
+        _reasoningSelector.ItemSelected += OnReasoningSelected;
 
         // ── History ──
         _history = new RichTextLabel();
@@ -412,6 +429,7 @@ public partial class CopilotChatPanel : Control
                     session = await _client.ResumeSessionAsync(sessionId, new ResumeSessionConfig
                     {
                         Model               = GetCurrentModel(),
+                        ReasoningEffort     = GetCurrentReasoningEffort(),
                         OnPermissionRequest = PermissionHandler.ApproveAll
                     }, token);
                 }
@@ -430,6 +448,7 @@ public partial class CopilotChatPanel : Control
                 {
                     SessionId           = sessionId,
                     Model               = GetCurrentModel(),
+                    ReasoningEffort     = GetCurrentReasoningEffort(),
                     OnPermissionRequest = PermissionHandler.ApproveAll
                 }, token);
             }
@@ -593,6 +612,22 @@ public partial class CopilotChatPanel : Control
         _sendButton.Disabled = !enabled;
         if (_modelSelector != null && _modelIds.Count > 0)
             _modelSelector.Disabled = !enabled;
+        if (_reasoningSelector != null)
+        {
+            if (!enabled)
+            {
+                _reasoningSelector.Disabled = true;
+            }
+            else
+            {
+                var pc = GetOrCreateProjectChats();
+                var modelIdx = _modelIds.IndexOf(pc.LastModel ?? CopilotModel);
+                bool supportsReasoning = modelIdx >= 0
+                    && modelIdx < _models.Count
+                    && _models[modelIdx].Capabilities.Supports.ReasoningEffort;
+                _reasoningSelector.Disabled = !supportsReasoning;
+            }
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -618,13 +653,17 @@ public partial class CopilotChatPanel : Control
             _suppressModelSwitch = true;
             _modelSelector.Clear();
             _modelIds.Clear();
+            _models.Clear();
 
             int selectedIdx = 0;
             for (int i = 0; i < allModels.Count; i++)
             {
                 var m = allModels[i];
                 _modelIds.Add(m.Id);
-                _modelSelector.AddItem(m.Name ?? m.Id);
+                _models.Add(m);
+                var mult = m.Billing?.Multiplier ?? 0;
+                var itemText = mult > 0 ? $"{m.Name ?? m.Id}  ×{mult:G}" : m.Name ?? m.Id;
+                _modelSelector.AddItem(itemText);
                 if (m.Id == savedModel)
                     selectedIdx = i;
             }
@@ -632,6 +671,8 @@ public partial class CopilotChatPanel : Control
             _modelSelector.Select(selectedIdx);
             _modelSelector.Disabled = false;
             _suppressModelSwitch = false;
+
+            PopulateReasoningSelector(selectedIdx);
         }
         catch (OperationCanceledException) { }
         catch (Exception e)
@@ -639,6 +680,98 @@ public partial class CopilotChatPanel : Control
             GD.PrintErr("Copilot: failed to load models: " + e.Message);
             _suppressModelSwitch = false;
         }
+    }
+
+    private void PopulateReasoningSelector(int modelIndex)
+    {
+        if (_reasoningSelector == null) return;
+
+        _suppressReasoningSwitch = true;
+        _reasoningSelector.Clear();
+
+        bool supportsReasoning = modelIndex >= 0
+            && modelIndex < _models.Count
+            && _models[modelIndex].Capabilities.Supports.ReasoningEffort;
+
+        if (!supportsReasoning)
+        {
+            _reasoningSelector.AddItem("—");
+            _reasoningSelector.Disabled = true;
+            _suppressReasoningSwitch = false;
+            return;
+        }
+
+        var m = _models[modelIndex];
+        var efforts = m.SupportedReasoningEfforts;
+        if (efforts == null || efforts.Count == 0)
+        {
+            _reasoningSelector.AddItem("—");
+            _reasoningSelector.Disabled = true;
+            _suppressReasoningSwitch = false;
+            return;
+        }
+
+        foreach (var effort in efforts)
+            _reasoningSelector.AddItem(effort);
+
+        var pc = GetOrCreateProjectChats();
+        var savedEffort = pc.LastReasoningEffort;
+        int effortIdx = 0;
+
+        if (!string.IsNullOrEmpty(savedEffort))
+        {
+            var idx = efforts.IndexOf(savedEffort);
+            if (idx >= 0)
+            {
+                effortIdx = idx;
+            }
+            else
+            {
+                // Saved effort not valid for this model — fall back to default
+                if (!string.IsNullOrEmpty(m.DefaultReasoningEffort))
+                {
+                    var defIdx = efforts.IndexOf(m.DefaultReasoningEffort);
+                    if (defIdx >= 0) effortIdx = defIdx;
+                }
+                pc.LastReasoningEffort = efforts[effortIdx];
+                SaveConfig();
+            }
+        }
+        else if (!string.IsNullOrEmpty(m.DefaultReasoningEffort))
+        {
+            var defIdx = efforts.IndexOf(m.DefaultReasoningEffort);
+            if (defIdx >= 0) effortIdx = defIdx;
+        }
+
+        _reasoningSelector.Select(effortIdx);
+        _reasoningSelector.Disabled = false;
+        _suppressReasoningSwitch = false;
+    }
+
+    private void OnReasoningSelected(long index)
+    {
+        if (_suppressReasoningSwitch) return;
+        var pc = GetOrCreateProjectChats();
+        pc.LastReasoningEffort = _reasoningSelector.GetItemText((int)index);
+        SaveConfig();
+        _ = ReloadCurrentSessionAsync(_cts.Token);
+    }
+
+    private async System.Threading.Tasks.Task ReloadCurrentSessionAsync(CancellationToken token)
+    {
+        var chat = CurrentChat();
+        if (chat == null) return;
+        _bbcode = "";
+        _history.Text = "";
+        _session = null;
+        SetInputEnabled(false);
+        await LoadOrCreateSession(chat.Id, token);
+    }
+
+    private string? GetCurrentReasoningEffort()
+    {
+        var pc = GetOrCreateProjectChats();
+        return pc.LastReasoningEffort;
     }
 
     private void OnModelSelected(long index)
@@ -655,7 +788,10 @@ public partial class CopilotChatPanel : Control
         var pc = GetOrCreateProjectChats();
         var previousModel = pc.LastModel ?? CopilotModel;
         pc.LastModel = modelId;
+        pc.LastReasoningEffort = null; // reset reasoning when switching models
         SaveConfig();
+
+        PopulateReasoningSelector(index);
 
         if (_session != null)
         {
@@ -688,12 +824,15 @@ public partial class CopilotChatPanel : Control
     {
         _suppressModelSwitch = true;
         _modelIds.RemoveAt(index);
+        _models.RemoveAt(index);
         _modelSelector.RemoveItem(index);
 
         // Select the fallback model
         var fallbackIdx = _modelIds.IndexOf(fallbackModelId);
         if (fallbackIdx < 0) fallbackIdx = 0;
         _modelSelector.Select(fallbackIdx);
+
+        PopulateReasoningSelector(fallbackIdx);
         _suppressModelSwitch = false;
     }
 }
