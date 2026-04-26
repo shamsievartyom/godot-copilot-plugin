@@ -56,10 +56,11 @@ public partial class CopilotChatPanel : Control
 
     private class ProjectChats
     {
-        [JsonPropertyName("lastId")]        public string  LastChatId         { get; set; }
-        [JsonPropertyName("lastModel")]     public string  LastModel          { get; set; }
-        [JsonPropertyName("lastReasoning")] public string? LastReasoningEffort { get; set; }
-        [JsonPropertyName("chats")]         public List<ChatEntry> Chats      { get; set; } = new();
+        [JsonPropertyName("lastId")]          public string  LastChatId          { get; set; }
+        [JsonPropertyName("lastModel")]       public string  LastModel           { get; set; }
+        [JsonPropertyName("lastReasoning")]   public string? LastReasoningEffort  { get; set; }
+        [JsonPropertyName("modelReasoning")]  public Dictionary<string, string> ModelReasoningEfforts { get; set; } = new();
+        [JsonPropertyName("chats")]           public List<ChatEntry> Chats        { get; set; } = new();
     }
 
     private class ChatConfig
@@ -715,7 +716,8 @@ public partial class CopilotChatPanel : Control
             _reasoningSelector.AddItem(effort);
 
         var pc = GetOrCreateProjectChats();
-        var savedEffort = pc.LastReasoningEffort;
+        var modelId = modelIndex >= 0 && modelIndex < _modelIds.Count ? _modelIds[modelIndex] : null;
+        pc.ModelReasoningEfforts.TryGetValue(modelId ?? "", out var savedEffort);
         int effortIdx = 0;
 
         if (!string.IsNullOrEmpty(savedEffort))
@@ -733,7 +735,7 @@ public partial class CopilotChatPanel : Control
                     var defIdx = efforts.IndexOf(m.DefaultReasoningEffort);
                     if (defIdx >= 0) effortIdx = defIdx;
                 }
-                pc.LastReasoningEffort = efforts[effortIdx];
+                if (modelId != null) pc.ModelReasoningEfforts[modelId] = efforts[effortIdx];
                 SaveConfig();
             }
         }
@@ -752,7 +754,8 @@ public partial class CopilotChatPanel : Control
     {
         if (_suppressReasoningSwitch) return;
         var pc = GetOrCreateProjectChats();
-        pc.LastReasoningEffort = _reasoningSelector.GetItemText((int)index);
+        var modelId = pc.LastModel ?? CopilotModel;
+        pc.ModelReasoningEfforts[modelId] = _reasoningSelector.GetItemText((int)index);
         SaveConfig();
         _ = ReloadCurrentSessionAsync(_cts.Token);
     }
@@ -771,7 +774,8 @@ public partial class CopilotChatPanel : Control
     private string? GetCurrentReasoningEffort()
     {
         var pc = GetOrCreateProjectChats();
-        return pc.LastReasoningEffort;
+        var modelId = pc.LastModel ?? CopilotModel;
+        return pc.ModelReasoningEfforts.TryGetValue(modelId, out var effort) ? effort : null;
     }
 
     private void OnModelSelected(long index)
@@ -786,38 +790,11 @@ public partial class CopilotChatPanel : Control
         var modelId = _modelIds[index];
 
         var pc = GetOrCreateProjectChats();
-        var previousModel = pc.LastModel ?? CopilotModel;
         pc.LastModel = modelId;
-        pc.LastReasoningEffort = null; // reset reasoning when switching models
         SaveConfig();
 
         PopulateReasoningSelector(index);
-
-        if (_session != null)
-        {
-            try
-            {
-                await _session.SetModelAsync(modelId, token);
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception e)
-            {
-                // If the model is unsupported (e.g. plan restriction), remove it from the list
-                if (e.Message.Contains("400") || e.Message.Contains("not supported"))
-                {
-                    AppendMessage($"⚠️ Модель недоступна для вашего тарифного плана: {_modelSelector.GetItemText(index)}", "#ffaa00");
-                    RemoveUnsupportedModel(index, previousModel);
-                }
-                else
-                {
-                    AppendMessage($"⚠️ Не удалось сменить модель: {e.Message}", "#ffaa00");
-                }
-
-                // Revert saved model
-                pc.LastModel = previousModel;
-                SaveConfig();
-            }
-        }
+        await ReloadCurrentSessionAsync(token);
     }
 
     private void RemoveUnsupportedModel(int index, string fallbackModelId)
