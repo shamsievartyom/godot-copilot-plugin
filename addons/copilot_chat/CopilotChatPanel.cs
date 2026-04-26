@@ -28,12 +28,14 @@ public partial class CopilotChatPanel : Control
     private bool _suppressModelSwitch;
     private OptionButton _reasoningSelector;
     private bool _suppressReasoningSwitch;
+    private Label _quotaLabel;
 
     // ── Copilot ─────────────────────────────────────────────────────────────
     private CopilotClient _client;
     private CopilotSession _session;
     private CancellationTokenSource _cts;
     private string _bbcode = "";
+    private IDisposable _usageSubscription;
 
     // ── Config ──────────────────────────────────────────────────────────────
     private ChatConfig _config;
@@ -97,6 +99,9 @@ public partial class CopilotChatPanel : Control
         _cts?.Dispose();
         _cts = null;
 
+        _usageSubscription?.Dispose();
+        _usageSubscription = null;
+
         var client = _client;
         _client  = null;
         _session = null;
@@ -159,6 +164,12 @@ public partial class CopilotChatPanel : Control
         modelBar.AddChild(_reasoningSelector);
 
         _reasoningSelector.ItemSelected += OnReasoningSelected;
+
+        _quotaLabel = new Label { Text = "" };
+        _quotaLabel.CustomMinimumSize = new Vector2(55, 0);
+        _quotaLabel.HorizontalAlignment = HorizontalAlignment.Right;
+        _quotaLabel.VerticalAlignment = VerticalAlignment.Center;
+        modelBar.AddChild(_quotaLabel);
 
         // ── History ──
         _history = new RichTextLabel();
@@ -401,6 +412,7 @@ public partial class CopilotChatPanel : Control
             _client = new CopilotClient(new CopilotClientOptions { UseStdio = true });
 
             await PopulateModelSelector(token);
+            _ = RefreshQuotaAsync(token);
 
             var chat = CurrentChat();
             await LoadOrCreateSession(chat?.Id, token);
@@ -455,6 +467,14 @@ public partial class CopilotChatPanel : Control
             }
 
             _session = session;
+
+            // Subscribe to per-message usage events for real-time quota updates.
+            _usageSubscription?.Dispose();
+            _usageSubscription = session.On(evt =>
+            {
+                if (evt is AssistantUsageEvent usage)
+                    UpdateQuotaFromUsage(usage.Data);
+            });
 
             // Replay stored conversation history.
             _bbcode = "";
@@ -795,6 +815,85 @@ public partial class CopilotChatPanel : Control
 
         PopulateReasoningSelector(index);
         await ReloadCurrentSessionAsync(token);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    //  Quota display
+    // ────────────────────────────────────────────────────────────────────────
+
+    private void UpdateQuotaFromUsage(AssistantUsageData data)
+    {
+        if (data?.QuotaSnapshots == null) return;
+        if (!data.QuotaSnapshots.TryGetValue("premium_interactions", out var snap)) return;
+
+        string labelText, labelTooltip;
+        if (snap.IsUnlimitedEntitlement)
+        {
+            labelText    = "P: ∞";
+            labelTooltip = "Безлимитные премиум запросы";
+        }
+        else
+        {
+            // AssistantUsageQuotaSnapshot.RemainingPercentage is 0..100
+            var usedPct  = Math.Round(100.0 - snap.RemainingPercentage, 1);
+            labelText    = $"P: {usedPct:0.0}%";
+            labelTooltip = $"Израсходовано {snap.UsedRequests} из {snap.EntitlementRequests} " +
+                           $"премиум запросов (сброс: {snap.ResetDate})";
+        }
+
+        Callable.From(() =>
+        {
+            if (IsInsideTree())
+            {
+                _quotaLabel.Text        = labelText;
+                _quotaLabel.TooltipText = labelTooltip;
+            }
+        }).CallDeferred();
+    }
+
+    private async System.Threading.Tasks.Task RefreshQuotaAsync(CancellationToken token)
+    {
+        if (_client == null || _quotaLabel == null) return;
+        try
+        {
+            var result = await _client.Rpc.Account.GetQuotaAsync(null, token);
+            if (result?.QuotaSnapshots == null) return;
+
+            string labelText = null, labelTooltip = null;
+
+            if (result.QuotaSnapshots.TryGetValue("premium_interactions", out var snap))
+            {
+                if (snap.IsUnlimitedEntitlement)
+                {
+                    labelText    = "P: ∞";
+                    labelTooltip = "Безлимитные премиум запросы";
+                }
+                else
+                {
+                    var usedPct  = Math.Round(100.0 - snap.RemainingPercentage, 1);
+                    labelText    = $"P: {usedPct:0.0}%";
+                    labelTooltip = $"Израсходовано {snap.UsedRequests} из {snap.EntitlementRequests} " +
+                                   $"премиум запросов (сброс: {snap.ResetDate})";
+                }
+            }
+
+            if (labelText != null)
+            {
+                Callable.From(() =>
+                {
+                    if (IsInsideTree())
+                    {
+                        _quotaLabel.Text        = labelText;
+                        _quotaLabel.TooltipText = labelTooltip;
+                    }
+                }).CallDeferred();
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e)
+        {
+            GD.PrintErr("Copilot quota refresh failed: " + e.Message);
+        }
     }
 
     private void RemoveUnsupportedModel(int index, string fallbackModelId)
