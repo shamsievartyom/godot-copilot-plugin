@@ -22,6 +22,9 @@ public partial class CopilotChatPanel : Control
     private Button _newChatButton;
     private Button _deleteChatButton;
 
+    // ── Plugin ref ──────────────────────────────────────────────────────────
+    private readonly EditorPlugin _editorPlugin;
+
     // ── Model list ──────────────────────────────────────────────────────────
     private List<string> _modelIds = new();
     private List<ModelInfo> _models = new();
@@ -29,6 +32,12 @@ public partial class CopilotChatPanel : Control
     private OptionButton _reasoningSelector;
     private bool _suppressReasoningSwitch;
     private Label _quotaLabel;
+    private GodotTools _godotTools;
+
+    public CopilotChatPanel(EditorPlugin editorPlugin)
+    {
+        _editorPlugin = editorPlugin;
+    }
 
     // ── Copilot ─────────────────────────────────────────────────────────────
     private CopilotClient _client;
@@ -79,6 +88,7 @@ public partial class CopilotChatPanel : Control
     {
         _cts        = new CancellationTokenSource();
         _projectKey = ProjectSettings.GlobalizePath("res://").TrimEnd('/', '\\');
+        _godotTools = new GodotTools(_editorPlugin);
 
         CustomMinimumSize = new Vector2(250, 400);
 
@@ -443,6 +453,7 @@ public partial class CopilotChatPanel : Control
                     {
                         Model               = GetCurrentModel(),
                         ReasoningEffort     = GetCurrentReasoningEffort(),
+                        Tools               = _godotTools.BuildAIFunctions(),
                         OnPermissionRequest = PermissionHandler.ApproveAll
                     }, token);
                 }
@@ -462,6 +473,7 @@ public partial class CopilotChatPanel : Control
                     SessionId           = sessionId,
                     Model               = GetCurrentModel(),
                     ReasoningEffort     = GetCurrentReasoningEffort(),
+                    Tools               = _godotTools.BuildAIFunctions(),
                     OnPermissionRequest = PermissionHandler.ApproveAll
                 }, token);
             }
@@ -649,6 +661,7 @@ public partial class CopilotChatPanel : Control
                 _reasoningSelector.Disabled = !supportsReasoning;
             }
         }
+
     }
 
     // ────────────────────────────────────────────────────────────────────────

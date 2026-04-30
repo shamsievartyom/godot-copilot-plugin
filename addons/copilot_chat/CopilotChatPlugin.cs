@@ -8,7 +8,7 @@ public partial class CopilotChatPlugin : EditorPlugin
 
     public override void _EnterTree()
     {
-        _panel = new CopilotChatPanel();
+        _panel = new CopilotChatPanel(this);
         AddControlToDock(DockSlot.RightUl, _panel);
     }
 
