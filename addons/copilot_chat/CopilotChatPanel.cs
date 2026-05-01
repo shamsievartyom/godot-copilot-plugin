@@ -21,6 +21,9 @@ public partial class CopilotChatPanel : Control
     private OptionButton _modelSelector;
     private Button _newChatButton;
     private Button _deleteChatButton;
+    private TextEdit _systemPromptEdit;
+    private Button _systemPromptToggle;
+    private PanelContainer _systemPromptPanel;
 
     // ── Plugin ref ──────────────────────────────────────────────────────────
     private readonly EditorPlugin _editorPlugin;
@@ -72,6 +75,7 @@ public partial class CopilotChatPanel : Control
         [JsonPropertyName("lastReasoning")]   public string? LastReasoningEffort  { get; set; }
         [JsonPropertyName("modelReasoning")]  public Dictionary<string, string> ModelReasoningEfforts { get; set; } = new();
         [JsonPropertyName("chats")]           public List<ChatEntry> Chats        { get; set; } = new();
+        [JsonPropertyName("systemPrompt")]    public string? SystemPrompt         { get; set; }
     }
 
     private class ChatConfig
@@ -95,6 +99,7 @@ public partial class CopilotChatPanel : Control
         LoadConfig();
         BuildUI();             // build widgets
         PopulateChatSelector();// fill dropdown (before connecting ItemSelected)
+        LoadSystemPromptUI();
 
         // Connect chat-switching signal after initial population to avoid
         // spurious switch during startup.
@@ -181,6 +186,35 @@ public partial class CopilotChatPanel : Control
         _quotaLabel.VerticalAlignment = VerticalAlignment.Center;
         modelBar.AddChild(_quotaLabel);
 
+        // ── System prompt bar ──
+        var spBar = new HBoxContainer();
+        vbox.AddChild(spBar);
+
+        _systemPromptToggle = new Button { Text = "System prompt ▼", Flat = true };
+        _systemPromptToggle.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _systemPromptToggle.Alignment = HorizontalAlignment.Left;
+        spBar.AddChild(_systemPromptToggle);
+
+        _systemPromptPanel = new PanelContainer();
+        _systemPromptPanel.Visible = false;
+        vbox.AddChild(_systemPromptPanel);
+
+        _systemPromptEdit = new TextEdit();
+        _systemPromptEdit.CustomMinimumSize = new Vector2(0, 80);
+        _systemPromptEdit.PlaceholderText   = "Системный промпт (применяется к новым сессиям)";
+        _systemPromptEdit.WrapMode          = TextEdit.LineWrappingMode.Boundary;
+        _systemPromptPanel.AddChild(_systemPromptEdit);
+
+        _systemPromptToggle.Pressed += () =>
+        {
+            _systemPromptPanel.Visible = !_systemPromptPanel.Visible;
+            _systemPromptToggle.Text = _systemPromptPanel.Visible
+                ? "System prompt ▲"
+                : "System prompt ▼";
+        };
+
+        _systemPromptEdit.FocusExited += OnSystemPromptChanged;
+
         // ── History ──
         _history = new RichTextLabel();
         _history.BbcodeEnabled      = true;
@@ -201,9 +235,9 @@ public partial class CopilotChatPanel : Control
         _sendButton = new Button { Text = "➤" };
         hbox.AddChild(_sendButton);
 
-        _sendButton.Pressed      += OnSendPressed;
-        _input.TextSubmitted     += _ => OnSendPressed();
-        _newChatButton.Pressed   += OnNewChatPressed;
+        _sendButton.Pressed       += OnSendPressed;
+        _input.TextSubmitted      += _ => OnSendPressed();
+        _newChatButton.Pressed    += OnNewChatPressed;
         _deleteChatButton.Pressed += OnDeleteChatPressed;
     }
 
@@ -454,6 +488,7 @@ public partial class CopilotChatPanel : Control
                         Model               = GetCurrentModel(),
                         ReasoningEffort     = GetCurrentReasoningEffort(),
                         Tools               = _godotTools.BuildAIFunctions(),
+                        SystemMessage       = GetSystemMessageConfig(),
                         OnPermissionRequest = PermissionHandler.ApproveAll
                     }, token);
                 }
@@ -474,6 +509,7 @@ public partial class CopilotChatPanel : Control
                     Model               = GetCurrentModel(),
                     ReasoningEffort     = GetCurrentReasoningEffort(),
                     Tools               = _godotTools.BuildAIFunctions(),
+                    SystemMessage       = GetSystemMessageConfig(),
                     OnPermissionRequest = PermissionHandler.ApproveAll
                 }, token);
             }
@@ -662,6 +698,39 @@ public partial class CopilotChatPanel : Control
             }
         }
 
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    //  System prompt
+    // ────────────────────────────────────────────────────────────────────────
+
+    private void LoadSystemPromptUI()
+    {
+        var pc = GetOrCreateProjectChats();
+        if (_systemPromptEdit != null && pc.SystemPrompt != null)
+            _systemPromptEdit.Text = pc.SystemPrompt;
+    }
+
+    private void OnSystemPromptChanged()
+    {
+        var text = _systemPromptEdit?.Text ?? "";
+        var pc   = GetOrCreateProjectChats();
+        pc.SystemPrompt = string.IsNullOrWhiteSpace(text) ? null : text;
+        SaveConfig();
+    }
+
+    private const string BaseSystemPrompt =
+        "You are a Godot 4 assistant embedded in the Godot editor. " +
+        "Help the user with their game project.";
+
+    private SystemMessageConfig GetSystemMessageConfig()
+    {
+        var pc      = GetOrCreateProjectChats();
+        var custom  = pc.SystemPrompt;
+        var content = string.IsNullOrWhiteSpace(custom)
+            ? BaseSystemPrompt
+            : BaseSystemPrompt + "\n\n" + custom.Trim();
+        return new SystemMessageConfig { Content = content };
     }
 
     // ────────────────────────────────────────────────────────────────────────
